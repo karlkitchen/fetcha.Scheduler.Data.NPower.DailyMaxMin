@@ -1,0 +1,5 @@
+#!/bin/ksh
+
+${__PROG_DIR}/Data\:NPower\:DailyMaxMin/scripts/Data\:NPower\:DailyMaxMin
+return_code=$?
+

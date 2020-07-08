@@ -1,0 +1,48 @@
+#!/bin/ksh
+
+${__PROG_DIR}/Data\:NPower\:DailyMaxMin/scripts/Data\:NPower\:DailyMaxMin
+return_code=$?
+
+source /project/fetcha/Cheddar/SYSTEM1//services//Data:NPower:DailyMaxMin/setup/Data:NPower:DailyMaxMin.txt
+service_dir=/project/fetcha/Cheddar/SYSTEM1//services//Data:NPower:DailyMaxMin/setup/../
+log_file=/project/fetcha/Cheddar/SYSTEM1//services//Data:NPower:DailyMaxMin/setup/..//logs/log.txt
+spice_log_file=/project/fetcha/Cheddar/SYSTEM1//services//Data:NPower:DailyMaxMin/setup/..//logs/log_spice.txt
+service_script=/project/fetcha/Cheddar/SYSTEM1//services//Data:NPower:DailyMaxMin/setup/Data:NPower:DailyMaxMin.txt
+
+if [[ ${return_code} -eq 0 && ${__SERVICE_EMAIL_BED} == true ]]; then
+  ls ${service_dir}/delivery/* >/dev/null 2>&1
+  if [[ $? -eq 0 ]]; then
+    for file in ${service_dir}/delivery/*; do
+      ${__SCHEDULER_SCRIPT_DIR}/send_to_BED.ksh ${file}
+      [[ $? -eq 0 ]] && print "__INFO: ${file} sent to BED" >> ${log_file} || print "__WARN: Could not send ${file} to BED" >> ${log_file}
+    done
+  else
+    echo "__INFO: There was no output to send to BED." >> ${log_file}
+  fi
+fi
+
+if [[ ${return_code} -eq 0 && ${__SERVICE_SEND_FTP} == true ]]; then
+  ls ${service_dir}/delivery/* >/dev/null 2>&1
+  if [[ $? -eq 0 ]]; then
+    for file in ${service_dir}/delivery/*; do
+      ${__SCHEDULER_SCRIPT_DIR}/send_to_FTP.ksh ${file}
+      [[ $? -eq 0 ]] && print "__INFO: ${file} sent to FTP" >> ${log_file} || print "__WARN: Could not send ${file} to FTP" >> ${log_file}
+    done
+  else
+    echo "__INFO: There was no output to send to FTP." >> ${log_file}
+  fi
+fi
+
+mv ${service_dir}/delivery/* ${service_dir}/output/ 2> /dev/null
+
+if [[ ${__SERVICE_EMAIL_TECHNICAL_LEAD} ]]; then
+  echo "Please visit the MONITOR page for details." | mutt -s "$(basename ${service_script}) has completed" ${__SERVICE_TECHNICAL_LEAD}@metoffice.gov.uk
+fi
+
+cat ${spice_log_file} >> ${log_file}
+
+${__SCHEDULER_SCRIPT_DIR}/get_service_status.ksh ${log_file} >> ${log_file}.history
+
+print "__COMPLETED: $(basename ${service_script}) $(whoami) $(date)" >> ${log_file}
+
+exit 0

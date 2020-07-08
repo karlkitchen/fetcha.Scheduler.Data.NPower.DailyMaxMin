@@ -1,0 +1,151 @@
+#!/bin/ksh -l
+
+module load scitools/production-os41-1
+
+service_dir=${__SERVICE_DIR}/$(basename $0)/
+
+source ${__FETCHA_ROOT_DIR}/cgi/initialise.ksh
+
+service_dir=${__SERVICE_DIR}/$(basename $0)/
+this_dir=${__PROG_DIR}$(basename $0)/
+
+this_day=$(date +%d)
+product_end_date=$(date --date "${this_day} days ago" +%Y%m%d)2300
+product_start_date=$(echo ${product_end_date} | cut -c1-6)010000
+
+day=$(echo ${product_end_date} | cut -c7-8)
+month=$(echo ${product_end_date} | cut -c5-6)
+year=$(echo ${product_end_date} | cut -c1-4)
+
+month_tab="$(date --date "$(echo ${product_start_date} | cut -c1-8)" +%B) ${year} (MAX+MIN TEMPS)"
+
+typeset -Z8 station 
+
+output_file_xlsx=${service_dir}/delivery/fetcha.Data.NPower.002.${__YEAR}_${__MONTH}_${__DAY}.xlsx
+output_file_csv=${this_dir}/temp/fetcha.Data.NPower.002.${__YEAR}_${__MONTH}_${__DAY}.csv
+
+product=P900
+elementid=V001,V002,
+units=DegC,DegC,
+wmo_region=-1             
+
+typeset -Z8 station station_1 station_2 station_3
+
+rm -f ${this_dir}/temp/*.csv
+rm -f ${this_dir}/temp/*.log
+while read line; do
+
+  for station in $(echo ${line} | sed 's/,/ /g'); do
+    met_file=${this_dir}/temp/${station}.csv
+    if [[ -e ${met_file} ]]; then
+       continue
+    fi
+    fetcha_log_file=${this_dir}/temp/${station}.log
+    echo "__INFO: extracting $station from ${product_start_date} to ${product_end_date}"
+    ${__FETCHA} -start ${product_start_date} -end ${product_end_date} -station ${station} -product ${product} -elementid ${elementid} -ofile ${met_file} -process_args across= down= ind= -units ${units} -wmo_region ${wmo_region} -job_number 0000000 -log ${fetcha_log_file}
+    [[ $? ]]  || echo "__WARN: fetcha encountered an error processing ${station}"
+    rm -f ${fetcha_log_file}
+  
+    if [[ -e ${met_file} ]]; then
+      if [[ $(wc -l ${met_file} | awk '{print $1}') -eq 10 ]]; then
+        this_date=${product_start_date}
+        while [[ ${this_date} -le ${product_end_date} ]]; do
+          this_date2="$(echo ${this_date} | cut -c1-8) $(echo ${this_date} | cut -c9-12)"
+          echo $(date +"%Y-%m-%d %H:%M:00" --date "${this_date2}"),NA,NA,NA,NA,NA,NA,NA,NA >> ${met_file}
+          this_date=$(date --date "+1 day ${this_date2}" +"%Y%m%d %H%M")
+          this_date=$(echo ${this_date} | sed 's/ //')
+        done
+      fi
+    fi
+    
+  done  
+
+done < ${this_dir}/input/StationList.txt
+
+while read line; do
+  station_1=$(echo ${line} | cut -f1 -d,)
+  station_2=$(echo ${line} | cut -f2 -d,)
+  station_3=$(echo ${line} | cut -f3 -d,)
+
+  echo Filling in missing data for ${station_1} using $station_2 and $station_3
+
+  cp ${this_dir}/temp/${station_1}.csv ${this_dir}/temp/${station_1}_main.csv
+  nCols=$(( 1 + $(sed -n 11p ${this_dir}/temp/${station_1}_main.csv | grep -o , | wc -l) ))
+  
+  for line_number in $(seq $(wc -l ${this_dir}/temp/${station_1}_main.csv | cut -f1 -d' ')); do
+    for column in $(seq ${nCols}); do
+      this_cell=$(sed -n ${line_number}p ${this_dir}/temp/${station_1}_main.csv | awk -F, '{print $'${column}'}')
+      if [[ ${this_cell} == "NA" ]]; then
+        this_cell_2=$(sed -n ${line_number}p ${this_dir}/temp/${station_2}.csv | awk -F, '{print $'${column}'}')
+        this_cell_3=$(sed -n ${line_number}p ${this_dir}/temp/${station_3}.csv | awk -F, '{print $'${column}'}')
+        if [[ ${this_cell_2} != "NA" ]]; then
+          replace_value=${this_cell_2}
+        else
+          replace_value=${this_cell_3}
+        fi
+       
+        new_line=$(sed -n ${line_number}p ${this_dir}/temp/${station_1}_main.csv | awk -F, '{$'${column}'="'${replace_value}'";print $0}' | sed 's/ /,/g')
+
+        sed -i "${line_number}s/.*/${new_line}/" ${this_dir}/temp/${station_1}_main.csv
+      fi
+    done
+  done
+  sed -i '11,999999s/ /,/g' ${this_dir}/temp/${station_1}_main.csv
+  
+done < ${this_dir}/input/StationList.txt
+
+rm -f ${output_file_csv}
+
+typeset -F2 latitude_in longitude_in
+
+typeset -Z8 this_station
+
+for this_station in 440 556 708 1144 19187 30523 30620 19206 1302 370 24125 161 56424 62122 697 25727 1137 57199; do
+  file=${this_dir}/temp/${this_station}_main.csv
+
+  print Formatting $file
+  station_name=$(sed -n 1p ${file} | awk -F, '{$1=""; print $0}' | sed -e 's/^[ \t]*//')
+  easting=$(sed -n 4p ${file} | awk -F, '{print $2}' | sed 's/ //g' | cut -c1-4)
+  northing=$(sed -n 5p ${file} | awk -F, '{print $2}' | sed 's/ //g' | cut -c1-4)
+  altitude=$(sed -n 6p ${file} | awk -F, '{print $2}' | sed 's/ //g')
+  latitude_in=$(sed -n 2p ${file} | awk -F, '{print $2}' | sed 's/ //g')
+  longitude_in=$(sed -n 3p ${file} | awk -F, '{print $2}' | sed 's/ //g')E
+  latitude=$(echo ${latitude_in} | sed 's/\./:/g')N
+  longitude=$(echo ${longitude_in} | sed 's/\./:/g')E
+  if [[ $(echo ${longitude} | cut -c1) == "-" ]]; then 
+    longitude=$(echo ${longitude} | cut -c2- | sed 's/ //g' | sed 's/E/W/')
+  fi
+
+  print "${station_name}" >> ${output_file_csv}
+  print "NGR = ${easting}E  ${northing}N" >> ${output_file_csv}
+  print "Altitude = ${altitude} metres" >> ${output_file_csv}
+  print "Latitude = ${latitude} Longitude = ${longitude}">> ${output_file_csv}
+  print "Date,Daily Maximum Temperature (0900-0900),Daily Minimum Temperature (0900-0900)" >> ${output_file_csv}
+  print "    ,(degC),(degC)" >> ${output_file_csv}
+
+  line_number=0
+  while read line; do
+    line_number=$(( ${line_number} + 1 ))
+    if [[ ${line_number} -gt 10 ]]; then
+      this_date=$(echo ${line} | awk -F, '{print $1}')
+      new_date=$(echo ${this_date} | cut -f3 -d'-')/$(echo ${this_date} | cut -f2 -d'-')/$(echo ${this_date} | cut -f1 -d'-')
+      data=$(echo ${line} | cut -f2- -d',')
+      [[ $(echo ${data} | cut -f1 -d,) == "NA" ]] && fstring1="%s" || fstring1="%.1f"
+      [[ $(echo ${data} | cut -f2 -d,) == "NA" ]] && fstring2="%s" || fstring2="%.1f"
+      format="${fstring1},${fstring2},\n"
+      data=$(echo ${data} | awk -F, '{printf "'${format}'",$1,$2}' | sed 's#NA#n/a#g')
+      print ${new_date},${data} >> ${output_file_csv}
+    fi
+  done < ${file}
+  echo "" >> ${output_file_csv}
+  echo "" >> ${output_file_csv}
+done
+
+python ${this_dir}/scripts/csv2xlsx.py ${output_file_csv} ${output_file_xlsx} "${month_tab}"
+return_code=$?
+
+if [[ ${return_code} -ne 0 ]]; then
+  echo "__FAIL: Error creating Excel file."
+fi
+
+exit
